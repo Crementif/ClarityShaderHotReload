@@ -7,11 +7,16 @@
 #include <windows.h>
 #include <algorithm>
 #include <fstream>
+#include <iostream>
+#include <sstream>
+#include <tchar.h>
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <Shellapi.h>
 
 // We are not including 'WinGDI.h' and 'gl.h', so the
 // required types must be redefined in this source file.
@@ -95,7 +100,7 @@ namespace GLProxy
 
 	static std::ofstream & getLogStream()
 	{
-		static std::ofstream theLog("opengl_proxy.log");
+		static std::ofstream theLog("ClarityPreviewTool.log");
 		return theLog;
 	}
 
@@ -230,8 +235,8 @@ namespace GLProxy
 			{
 				dllFilePath = tempString;
 			}
-			GLPROXY_LOG(">>> Locked onto opengl32.dll from " + dllFilePath + ". Succesfully hooked this program!");
-			GLPROXY_LOG("------------------------------------------------------------------");
+			GLPROXY_LOG("Locked onto opengl32.dll from " + dllFilePath + ". Succesfully hooked this program!");
+			GLPROXY_LOG("------------------------------------------------------------------\nDebug Info:");
 		}
 
 		void unload()
@@ -336,7 +341,7 @@ namespace GLProxy
 	{
 		AutoReport()
 		{
-			GLPROXY_LOG(">>> Hooked into Cemu, now attempt to load real opengl32.dll - " << getTimeString() << "<<<");
+			GLPROXY_LOG("Hooked into Cemu, now attempt to load real opengl32.dll - " << getTimeString());
 		}
 		// Have some kinda destructor.
 	};
@@ -996,6 +1001,7 @@ GLFUNC_9(glTexSubImage2D, GLenum, target, GLint, level, GLint, xoffset, GLint, y
 GLFUNC_10(glMap2d, GLenum, target, GLdouble, u1, GLdouble, u2, GLint, ustride, GLint, uorder, GLdouble, v1, GLdouble, v2, GLint, vstride, GLint, vorder, const GLdouble *, points);
 GLFUNC_10(glMap2f, GLenum, target, GLfloat, u1, GLfloat, u2, GLint, ustride, GLint, uorder, GLfloat, v1, GLfloat, v2, GLint, vstride, GLint, vorder, const GLfloat *, points);
 
+
 // >>> Define logging
 int frameCounter = 0;
 int framesPassed = 0;
@@ -1023,24 +1029,40 @@ bool replace(std::string& str, const std::string& from, const std::string& to) {
 	return true;
 }
 
+// Enumerators
+#define GL_PROGRAM_SEPARABLE                     0x8258
+#define GL_PROGRAM_BINARY_RETRIEVABLE_HINT                     0x8257
+#define GL_FRAGMENT_SHADER                     0x8B30
+
+
+
 // Shader stuff
 std::string clarityCheckHash = "37040a485a29d54e";
 
-BOOL recompileShader = false;
-int currClarityPresetValue = 3;
+BOOL originalProgram = true;
 
 std::string clarityShaderString = "";
-GLuint clarityShaderCallName = 0;
-GLuint clarityShaderProgram = 0;
+GLuint originalShaderCallName = 0;
+GLuint originalShaderProgram = 0;
 typedef void(*func_ptrShaderSource)(GLuint, GLsizei, const char**, const GLint *);
-typedef void(*func_ptrCompile)(GLuint);
+typedef void(*func_ptrCompileLink)(GLuint);
 typedef void(*func_ptrAttach)(GLuint, GLuint);
+typedef void(*func_ptrUseProgramStages)(GLuint, GLbitfield, GLuint);
+typedef GLuint(*func_ptrCreateProgram)(void);
+typedef GLuint(*func_ptrCreateShader)(GLenum);
+typedef void(*func_ptrProgramParameteri)(GLuint, GLenum, GLint);
 func_ptrShaderSource realShaderSourceAddress;
-func_ptrCompile realCompileAddress;
+func_ptrCompileLink realCompileAddress;
 func_ptrAttach realAttachAddress;
+func_ptrUseProgramStages realUseProgramStagesAddress;
+func_ptrCreateShader realCreateShaderAddress;
+func_ptrCreateProgram realCreateProgramAddress;
+func_ptrCompileLink realLinkProgramAddress;
+func_ptrProgramParameteri realProgramParameteriAddress;
 
 GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 {
+	// Frame and average frametime counter.
 	frameCounter++;
 	framesPassed++;
 	if (firstFrame) {
@@ -1064,33 +1086,90 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 
 	QueryPerformanceFrequency(&Frequency);
 	QueryPerformanceCounter(&StartingTime);
+
 	static GLProxy::TGLFunc<BOOL, HDC> TGLFUNC_DECL(wglSwapBuffers);
 	return TGLFUNC_CALL(wglSwapBuffers, hdc);
 }
 
+
 // --------------------------------------------------------- Extension hooks
+HANDLE changeHandle = NULL;
+int pollRate = 0;
+bool launchEditor = true;
+
+GLuint clarityShaderCallName = NULL;
+GLuint clarityShaderProgram = NULL;
+
+void ext_glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program) {
+	if (changeHandle == NULL) {
+		changeHandle = FindFirstChangeNotification(_T("graphicPacks\\BreathOfTheWild_Clarity\\"), FALSE, FILE_NOTIFY_CHANGE_LAST_WRITE);
+		if (changeHandle == INVALID_HANDLE_VALUE || changeHandle == NULL) {
+			MessageBoxA(NULL, "Couldn't find the Clarity graphic pack at '\\graphicPacks\\BreathOfTheWild_Clarity\\'\nYou can download them from the official repository at https://slashiee.github.io/cemu_graphic_packs/.", "No Clarity graphic pack found!", MB_OK | MB_ICONERROR | MB_TASKMODAL);
+			GLPROXY_LOG("Exiting... couldn't find the Clarity graphic pack.");
+			std::exit(EXIT_FAILURE);
+		}
+	}
+	if (pollRate > 60) {
+		pollRate = 0;
+		DWORD folderStatus = WaitForSingleObject(changeHandle, 0);
+		if (folderStatus == WAIT_OBJECT_0) {
+			changeHandle = NULL; // Just make a new handle so that it'll notify for the next change.
+			// Create a new shader with the changed source
+			std::ifstream shaderFile("graphicPacks\\BreathOfTheWild_Clarity\\37040a485a29d54e_00000000000003c9_ps.txt");
+			if (shaderFile.is_open()) {
+				std::string changedShaderSource((std::istreambuf_iterator<char>(shaderFile)), std::istreambuf_iterator<char>());
+				// Typical Cemu shader creation
+				clarityShaderCallName = realCreateShaderAddress(GL_FRAGMENT_SHADER);
+				const char *fragmentSource = (const char *)changedShaderSource.c_str();
+				realShaderSourceAddress(clarityShaderCallName, 1, &fragmentSource, 0);
+				realCompileAddress(clarityShaderCallName);
+
+				clarityShaderProgram = realCreateProgramAddress();
+				realProgramParameteriAddress(clarityShaderProgram, GL_PROGRAM_SEPARABLE, true);
+				realAttachAddress(clarityShaderProgram, clarityShaderCallName);
+				realLinkProgramAddress(clarityShaderProgram);
+				GLPROXY_LOG("Clarity shader file has been edited. Succesfully compiled the shader.");
+			}
+			else GLPROXY_LOG("Can't read file. Make sure you haven't deleted or renamed the shader/graphic pack.");
+		}
+	}
+	else pollRate++;
+
+	//----------
+	if (program == originalShaderProgram && clarityShaderCallName != NULL) {
+		return realUseProgramStagesAddress(pipeline, stages, clarityShaderProgram);
+	}
+	else if (program == originalShaderProgram) {
+		if (launchEditor) {
+			ShellExecute(NULL, _T("open"), _T("graphicPacks\\BreathOfTheWild_Clarity\\37040a485a29d54e_00000000000003c9_ps.txt"), NULL, NULL, SW_SHOW);
+		}
+		launchEditor = false;
+	}
+	return realUseProgramStagesAddress(pipeline, stages, program);
+}
+PROC fakeUseProgramStagesAddress = reinterpret_cast<PROC>(ext_glUseProgramStages);
+
+
+
+
+
+
 void ext_glShaderSource(GLuint shader, GLsizei count, const char **string, const GLint *length) {
 	if (strstr(*string, clarityCheckHash.c_str())) {
 		std::string newString(*string, *length);
 		clarityShaderString = newString;
-		clarityShaderCallName = shader;
-		replace(clarityShaderString, "clarityPresetMarker", std::to_string(currClarityPresetValue));
-		const GLint newLength = (const GLint)newString.length();
+		originalShaderCallName = shader;
 		GLPROXY_LOG("Found Clarity shader source. It's function call was ext_glShaderSource(shader=" << shader << ", count=" << count << ", string=" << string << ", length=" << length << ");");
-		const char *cstr = newString.c_str();
-		return realShaderSourceAddress(shader, count, &cstr, &newLength);
 	}
-	else {
-		return realShaderSourceAddress(shader, count, string, length);
-	}
+	return realShaderSourceAddress(shader, count, string, length);
 }
 PROC fakeAddress = reinterpret_cast<PROC>(ext_glShaderSource);
 
 void ext_glAttachShader(GLuint program, GLuint shader) {
 	// GLPROXY_LOGEVENT("Attached "<< shader << " to program "<< program);
-	if (shader == clarityShaderCallName) {
+	if (shader == originalShaderCallName) {
 		GLPROXY_LOGEVENT("Clarity shader (" << shader << ") got attached to program " << program);
-		clarityShaderProgram = shader;
+		originalShaderProgram = program;
 	}
 	return realAttachAddress(program, shader);
 }
@@ -1101,15 +1180,28 @@ GLPROXY_EXTERN PROC GLPROXY_DECL wglGetProcAddress(LPCSTR funcName)
 	static GLProxy::TGLFunc<PROC, LPCSTR> TGLFUNC_DECL(wglGetProcAddress);
 	if (strcmp(funcName, "glShaderSource")==0) {
 		realShaderSourceAddress = (func_ptrShaderSource)TGLFUNC_CALL(wglGetProcAddress, "glShaderSource");
-		realCompileAddress = (func_ptrCompile)TGLFUNC_CALL(wglGetProcAddress, "glCompileShader");
+		realCompileAddress = (func_ptrCompileLink)TGLFUNC_CALL(wglGetProcAddress, "glCompileShader");
+		realCreateShaderAddress = (func_ptrCreateShader)TGLFUNC_CALL(wglGetProcAddress, "glCreateShader");
+		realCreateProgramAddress = (func_ptrCreateProgram)TGLFUNC_CALL(wglGetProcAddress, "glCreateProgram");
+		realLinkProgramAddress = (func_ptrCompileLink)TGLFUNC_CALL(wglGetProcAddress, "glLinkProgram");
+		realProgramParameteriAddress = (func_ptrProgramParameteri)TGLFUNC_CALL(wglGetProcAddress, "glProgramParameteri");
 		GLPROXY_LOG("Proxied "<< funcName << " function from an extension which address is "<< realShaderSourceAddress << ".");
 		GLPROXY_LOG("Grabbed extension address from glCompileShader function and got in return " << realCompileAddress <<".");
+		GLPROXY_LOG("Grabbed extension address from glCreateShader function and got in return " << realCreateShaderAddress << ".");
+		GLPROXY_LOG("Grabbed extension address from glCreateProgram function and got in return " << realCreateProgramAddress << ".");
+		GLPROXY_LOG("Grabbed extension address from glLinkProgram function and got in return " << realLinkProgramAddress << ".");
+		GLPROXY_LOG("Grabbed extension address from glProgramParameteri function and got in return " << realProgramParameteriAddress << ".");
 		return fakeAddress;
 	}
 	if (strcmp(funcName, "glAttachShader") == 0) {
 		realAttachAddress = (func_ptrAttach)TGLFUNC_CALL(wglGetProcAddress, "glAttachShader");
 		GLPROXY_LOG("Proxied " << funcName << " function from an extension which address is " << realAttachAddress << ".");
 		return fakeAttachAddress;
+	}
+	if (strcmp(funcName, "glUseProgramStages") == 0) {
+		realUseProgramStagesAddress = (func_ptrUseProgramStages)TGLFUNC_CALL(wglGetProcAddress, "glUseProgramStages");
+		GLPROXY_LOG("Proxied " << funcName << " function from an extension which address is " << realUseProgramStagesAddress << ".");
+		return fakeUseProgramStagesAddress;
 	}
 	else {
 		return TGLFUNC_CALL(wglGetProcAddress, funcName);
