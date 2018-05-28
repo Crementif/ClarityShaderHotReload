@@ -1060,6 +1060,13 @@ func_ptrCreateProgram realCreateProgramAddress;
 func_ptrCompileLink realLinkProgramAddress;
 func_ptrProgramParameteri realProgramParameteriAddress;
 
+HANDLE changeHandle = NULL;
+int pollRate = 0;
+bool launchEditor = true;
+
+GLuint clarityShaderCallName = NULL;
+GLuint clarityShaderProgram = NULL;
+
 GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 {
 	// Frame and average frametime counter.
@@ -1075,7 +1082,7 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 		averageFrameTime = sumFrameTime / 1000;
 		framesPassed = 0;
 		sumFrameTime = 0;
-		GLPROXY_LOG("Average frametime: " + numToString(averageFrameTime / 1000) + " ms.");
+		GLPROXY_LOG("Average frametime from the last 1000 frames: " + numToString(averageFrameTime / 1000) + " ms.");
 	}
 	QueryPerformanceCounter(&EndingTime);
 	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
@@ -1087,34 +1094,12 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 	QueryPerformanceFrequency(&Frequency);
 	QueryPerformanceCounter(&StartingTime);
 
-	static GLProxy::TGLFunc<BOOL, HDC> TGLFUNC_DECL(wglSwapBuffers);
-	return TGLFUNC_CALL(wglSwapBuffers, hdc);
-}
-
-
-// --------------------------------------------------------- Extension hooks
-HANDLE changeHandle = NULL;
-int pollRate = 0;
-bool launchEditor = true;
-
-GLuint clarityShaderCallName = NULL;
-GLuint clarityShaderProgram = NULL;
-
-void ext_glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program) {
-	if (changeHandle == NULL) {
-		changeHandle = FindFirstChangeNotification(_T("graphicPacks\\BreathOfTheWild_Clarity\\"), FALSE, FILE_NOTIFY_CHANGE_LAST_WRITE);
-		if (changeHandle == INVALID_HANDLE_VALUE || changeHandle == NULL) {
-			MessageBoxA(NULL, "Couldn't find the Clarity graphic pack at '\\graphicPacks\\BreathOfTheWild_Clarity\\'\nYou can download them from the official repository at https://slashiee.github.io/cemu_graphic_packs/.", "No Clarity graphic pack found!", MB_OK | MB_ICONERROR | MB_TASKMODAL);
-			GLPROXY_LOG("Exiting... couldn't find the Clarity graphic pack.");
-			std::exit(EXIT_FAILURE);
-		}
-	}
-	if (pollRate > 60) {
+	if (pollRate > 20 && launchEditor == false) {
 		pollRate = 0;
 		DWORD folderStatus = WaitForSingleObject(changeHandle, 0);
 		if (folderStatus == WAIT_OBJECT_0) {
 			changeHandle = NULL; // Just make a new handle so that it'll notify for the next change.
-			// Create a new shader with the changed source
+								 // Create a new shader with the changed source
 			std::ifstream shaderFile("graphicPacks\\BreathOfTheWild_Clarity\\37040a485a29d54e_00000000000003c9_ps.txt");
 			if (shaderFile.is_open()) {
 				std::string changedShaderSource((std::istreambuf_iterator<char>(shaderFile)), std::istreambuf_iterator<char>());
@@ -1134,6 +1119,23 @@ void ext_glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program) 
 		}
 	}
 	else pollRate++;
+
+	static GLProxy::TGLFunc<BOOL, HDC> TGLFUNC_DECL(wglSwapBuffers);
+	return TGLFUNC_CALL(wglSwapBuffers, hdc);
+}
+
+
+// --------------------------------------------------------- Extension hooks
+
+void ext_glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program) {
+	if (changeHandle == NULL) {
+		changeHandle = FindFirstChangeNotification(_T("graphicPacks\\BreathOfTheWild_Clarity\\"), FALSE, FILE_NOTIFY_CHANGE_LAST_WRITE);
+		if (changeHandle == INVALID_HANDLE_VALUE || changeHandle == NULL) {
+			MessageBoxA(NULL, "Couldn't find the Clarity graphic pack at '\\graphicPacks\\BreathOfTheWild_Clarity\\'\nYou can download them from the official repository at https://slashiee.github.io/cemu_graphic_packs/.", "No Clarity graphic pack found!", MB_OK | MB_ICONERROR | MB_TASKMODAL);
+			GLPROXY_LOG("Exiting... couldn't find the Clarity graphic pack.");
+			std::exit(EXIT_FAILURE);
+		}
+	}
 
 	//----------
 	if (program == originalShaderProgram && clarityShaderCallName != NULL) {
