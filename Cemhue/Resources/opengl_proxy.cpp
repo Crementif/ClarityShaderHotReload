@@ -1083,6 +1083,9 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 		framesPassed = 0;
 		sumFrameTime = 0;
 		GLPROXY_LOG("Average frametime from the last 1000 frames: " + numToString(averageFrameTime / 1000) + " ms.");
+		HMODULE cemuModule = GetModuleHandle(L"Cemu.exe");
+		FARPROC getTitleIdFunction = GetProcAddress(cemuModule, "lpProcName"); // unsigned __int64
+		GLPROXY_LOG("Here's an handle to Cemu's handle:"<<cemuModule);
 	}
 	QueryPerformanceCounter(&EndingTime);
 	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
