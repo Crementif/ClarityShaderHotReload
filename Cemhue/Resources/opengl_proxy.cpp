@@ -236,7 +236,6 @@ namespace GLProxy
 				dllFilePath = tempString;
 			}
 			GLPROXY_LOG("Locked onto opengl32.dll from " + dllFilePath + ". Succesfully hooked this program!");
-			GLPROXY_LOG("------------------------------------------------------------------\nDebug Info:");
 		}
 
 		void unload()
@@ -1067,6 +1066,9 @@ bool launchEditor = true;
 GLuint clarityShaderCallName = NULL;
 GLuint clarityShaderProgram = NULL;
 
+typedef unsigned __int64 (*getTitleId)(void);
+unsigned __int64 currentTitleIdDec = NULL;
+
 GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 {
 	// Frame and average frametime counter.
@@ -1083,9 +1085,6 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 		framesPassed = 0;
 		sumFrameTime = 0;
 		GLPROXY_LOG("Average frametime from the last 1000 frames: " + numToString(averageFrameTime / 1000) + " ms.");
-		HMODULE cemuModule = GetModuleHandle(L"Cemu.exe");
-		FARPROC getTitleIdFunction = GetProcAddress(cemuModule, "lpProcName"); // unsigned __int64
-		GLPROXY_LOG("Here's an handle to Cemu's handle:"<<cemuModule);
 	}
 	QueryPerformanceCounter(&EndingTime);
 	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
@@ -1096,8 +1095,23 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 
 	QueryPerformanceFrequency(&Frequency);
 	QueryPerformanceCounter(&StartingTime);
+	if (currentTitleIdDec == NULL) {
+		HMODULE cemuModule = GetModuleHandle(L"Cemu.exe");
+		getTitleId getTitleIdFunction = (getTitleId)GetProcAddress(cemuModule, "gameMeta_getTitleId");
+		currentTitleIdDec = (getTitleIdFunction)();
+		if (currentTitleIdDec == 1407375153861376 || currentTitleIdDec == 1407375153861632 || currentTitleIdDec == 1407375153861888) {
+			GLPROXY_LOG("------------------- Running Breath of the Wild -------------------");
+		}
+		else if (currentTitleIdDec == 1407375153522944 || currentTitleIdDec == 1407375153523200 || currentTitleIdDec == 1407375153441536) {
+			GLPROXY_LOG("------------------------ Running Splatoon ------------------------");
+		}
+		else {
+			GLPROXY_LOG("-------------------------- Unknown game "<< currentTitleIdDec <<" --------------------------");
+		}
+		GLPROXY_LOG("Debug info:");
+	}
 
-	if (pollRate > 20 && launchEditor == false) {
+	if (pollRate > 10 && launchEditor == false) {
 		pollRate = 0;
 		DWORD folderStatus = WaitForSingleObject(changeHandle, 0);
 		if (folderStatus == WAIT_OBJECT_0) {
@@ -1153,9 +1167,6 @@ void ext_glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program) 
 	return realUseProgramStagesAddress(pipeline, stages, program);
 }
 PROC fakeUseProgramStagesAddress = reinterpret_cast<PROC>(ext_glUseProgramStages);
-
-
-
 
 
 
