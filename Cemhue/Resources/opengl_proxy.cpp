@@ -1077,6 +1077,13 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 		firstFrame = 0;
 		QueryPerformanceFrequency(&Frequency);
 		QueryPerformanceCounter(&StartingTime);
+
+		typedef void *__ptr64(*getBase)(void);
+		void *__ptr64 baseAddress = NULL;
+		HMODULE cemuModule = GetModuleHandle(L"Cemu.exe");
+		getBase getBaseFunction = (getBase)GetProcAddress(cemuModule, "memory_getBase");
+		baseAddress = (getBaseFunction)();
+		GLPROXY_LOG("Cemu's base address is " << baseAddress << ".");
 	}
 	if (framesPassed > 1000) {
 		averageFrameTime = sumFrameTime / 1000;
@@ -1094,31 +1101,31 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 	QueryPerformanceFrequency(&Frequency);
 	QueryPerformanceCounter(&StartingTime);
 
-	if (pollRate > 20 && launchEditor == false) {
-		pollRate = 0;
-		DWORD folderStatus = WaitForSingleObject(changeHandle, 0);
-		if (folderStatus == WAIT_OBJECT_0) {
-			changeHandle = NULL; // Just make a new handle so that it'll notify for the next change.
-								 // Create a new shader with the changed source
-			std::ifstream shaderFile("graphicPacks\\BreathOfTheWild_Clarity\\37040a485a29d54e_00000000000003c9_ps.txt");
-			if (shaderFile.is_open()) {
-				std::string changedShaderSource((std::istreambuf_iterator<char>(shaderFile)), std::istreambuf_iterator<char>());
-				// Typical Cemu shader creation
-				clarityShaderCallName = realCreateShaderAddress(GL_FRAGMENT_SHADER);
-				const char *fragmentSource = (const char *)changedShaderSource.c_str();
-				realShaderSourceAddress(clarityShaderCallName, 1, &fragmentSource, 0);
-				realCompileAddress(clarityShaderCallName);
+	//if (pollRate > 20 && launchEditor == false) {
+	//	pollRate = 0;
+	//	DWORD folderStatus = WaitForSingleObject(changeHandle, 0);
+	//	if (folderStatus == WAIT_OBJECT_0) {
+	//		changeHandle = NULL; // Just make a new handle so that it'll notify for the next change.
+	//							 // Create a new shader with the changed source
+	//		std::ifstream shaderFile("graphicPacks\\BreathOfTheWild_Clarity\\37040a485a29d54e_00000000000003c9_ps.txt");
+	//		if (shaderFile.is_open()) {
+	//			std::string changedShaderSource((std::istreambuf_iterator<char>(shaderFile)), std::istreambuf_iterator<char>());
+	//			// Typical Cemu shader creation
+	//			clarityShaderCallName = realCreateShaderAddress(GL_FRAGMENT_SHADER);
+	//			const char *fragmentSource = (const char *)changedShaderSource.c_str();
+	//			realShaderSourceAddress(clarityShaderCallName, 1, &fragmentSource, 0);
+	//			realCompileAddress(clarityShaderCallName);
 
-				clarityShaderProgram = realCreateProgramAddress();
-				realProgramParameteriAddress(clarityShaderProgram, GL_PROGRAM_SEPARABLE, true);
-				realAttachAddress(clarityShaderProgram, clarityShaderCallName);
-				realLinkProgramAddress(clarityShaderProgram);
-				GLPROXY_LOG("Clarity shader file has been edited. Succesfully compiled the shader.");
-			}
-			else GLPROXY_LOG("Can't read file. Make sure you haven't deleted or renamed the shader/graphic pack.");
-		}
-	}
-	else pollRate++;
+	//			clarityShaderProgram = realCreateProgramAddress();
+	//			realProgramParameteriAddress(clarityShaderProgram, GL_PROGRAM_SEPARABLE, true);
+	//			realAttachAddress(clarityShaderProgram, clarityShaderCallName);
+	//			realLinkProgramAddress(clarityShaderProgram);
+	//			GLPROXY_LOG("Clarity shader file has been edited. Succesfully compiled the shader.");
+	//		}
+	//		else GLPROXY_LOG("Can't read file. Make sure you haven't deleted or renamed the shader/graphic pack.");
+	//	}
+	//}
+	//else pollRate++;
 
 	static GLProxy::TGLFunc<BOOL, HDC> TGLFUNC_DECL(wglSwapBuffers);
 	return TGLFUNC_CALL(wglSwapBuffers, hdc);
@@ -1128,25 +1135,25 @@ GLPROXY_EXTERN BOOL GLPROXY_DECL wglSwapBuffers(HDC hdc)
 // --------------------------------------------------------- Extension hooks
 
 void ext_glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program) {
-	if (changeHandle == NULL) {
-		changeHandle = FindFirstChangeNotification(_T("graphicPacks\\BreathOfTheWild_Clarity\\"), FALSE, FILE_NOTIFY_CHANGE_LAST_WRITE);
-		if (changeHandle == INVALID_HANDLE_VALUE || changeHandle == NULL) {
-			MessageBoxA(NULL, "Couldn't find the Clarity graphic pack at '\\graphicPacks\\BreathOfTheWild_Clarity\\'\nYou can download them from the official repository at https://slashiee.github.io/cemu_graphic_packs/.", "No Clarity graphic pack found!", MB_OK | MB_ICONERROR | MB_TASKMODAL);
-			GLPROXY_LOG("Exiting... couldn't find the Clarity graphic pack.");
-			std::exit(EXIT_FAILURE);
-		}
-	}
+	//if (changeHandle == NULL) {
+	//	changeHandle = FindFirstChangeNotification(_T("graphicPacks\\BreathOfTheWild_Clarity\\"), FALSE, FILE_NOTIFY_CHANGE_LAST_WRITE);
+	//	if (changeHandle == INVALID_HANDLE_VALUE || changeHandle == NULL) {
+	//		MessageBoxA(NULL, "Couldn't find the Clarity graphic pack at '\\graphicPacks\\BreathOfTheWild_Clarity\\'\nYou can download them from the official repository at https://slashiee.github.io/cemu_graphic_packs/.", "No Clarity graphic pack found!", MB_OK | MB_ICONERROR | MB_TASKMODAL);
+	//		GLPROXY_LOG("Exiting... couldn't find the Clarity graphic pack.");
+	//		std::exit(EXIT_FAILURE);
+	//	}
+	//}
 
-	//----------
-	if (program == originalShaderProgram && clarityShaderCallName != NULL) {
-		return realUseProgramStagesAddress(pipeline, stages, clarityShaderProgram);
-	}
-	else if (program == originalShaderProgram) {
-		if (launchEditor) {
-			ShellExecute(NULL, _T("open"), _T("graphicPacks\\BreathOfTheWild_Clarity\\37040a485a29d54e_00000000000003c9_ps.txt"), NULL, NULL, SW_SHOW);
-		}
-		launchEditor = false;
-	}
+	////----------
+	//if (program == originalShaderProgram && clarityShaderCallName != NULL) {
+	//	return realUseProgramStagesAddress(pipeline, stages, clarityShaderProgram);
+	//}
+	//else if (program == originalShaderProgram) {
+	//	if (launchEditor) {
+	//		ShellExecute(NULL, _T("open"), _T("graphicPacks\\BreathOfTheWild_Clarity\\37040a485a29d54e_00000000000003c9_ps.txt"), NULL, NULL, SW_SHOW);
+	//	}
+	//	launchEditor = false;
+	//}
 	return realUseProgramStagesAddress(pipeline, stages, program);
 }
 PROC fakeUseProgramStagesAddress = reinterpret_cast<PROC>(ext_glUseProgramStages);
@@ -1157,22 +1164,22 @@ PROC fakeUseProgramStagesAddress = reinterpret_cast<PROC>(ext_glUseProgramStages
 
 
 void ext_glShaderSource(GLuint shader, GLsizei count, const char **string, const GLint *length) {
-	if (strstr(*string, clarityCheckHash.c_str())) {
-		std::string newString(*string, *length);
-		clarityShaderString = newString;
-		originalShaderCallName = shader;
-		GLPROXY_LOG("Found Clarity shader source. It's function call was ext_glShaderSource(shader=" << shader << ", count=" << count << ", string=" << string << ", length=" << length << ");");
-	}
+	//if (strstr(*string, clarityCheckHash.c_str())) {
+	//	std::string newString(*string, *length);
+	//	clarityShaderString = newString;
+	//	originalShaderCallName = shader;
+	//	GLPROXY_LOG("Found Clarity shader source. It's function call was ext_glShaderSource(shader=" << shader << ", count=" << count << ", string=" << string << ", length=" << length << ");");
+	//}
 	return realShaderSourceAddress(shader, count, string, length);
 }
 PROC fakeAddress = reinterpret_cast<PROC>(ext_glShaderSource);
 
 void ext_glAttachShader(GLuint program, GLuint shader) {
 	// GLPROXY_LOGEVENT("Attached "<< shader << " to program "<< program);
-	if (shader == originalShaderCallName) {
-		GLPROXY_LOGEVENT("Clarity shader (" << shader << ") got attached to program " << program);
-		originalShaderProgram = program;
-	}
+	//if (shader == originalShaderCallName) {
+	//	GLPROXY_LOGEVENT("Clarity shader (" << shader << ") got attached to program " << program);
+	//	originalShaderProgram = program;
+	//}
 	return realAttachAddress(program, shader);
 }
 PROC fakeAttachAddress = reinterpret_cast<PROC>(ext_glAttachShader);
